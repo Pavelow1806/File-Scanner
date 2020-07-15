@@ -333,7 +333,7 @@ namespace File_Scanner.ViewModels
 
                     // Display the current file
                     FileCount++;
-                    CurrentFile = file.FullName;
+                    CurrentFile = Path.GetFileName(file.FullName);
                 }
 
                 // Get all of the directories within this directory
