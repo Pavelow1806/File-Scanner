@@ -17,28 +17,41 @@ namespace File_Scanner.Functionality
 {
     public class XMLWriter
     {
-        // Singleton Instance
+        #region Singleton Instance
         public static XMLWriter Instance;
+        #endregion
 
-        // Queue
+        #region Queue
         private ConcurrentQueue<NewFileDataEventArgs> Queue = null;
+        #endregion
 
-        // Threading
+        #region Threading
         private Thread xmlWriter;
+        #endregion
 
-        // Writer State
+        #region Writer State
         private bool xmlWriterRunning = false;
+        #endregion
 
-        // Writer Settings
+        #region Fields
+        private XmlElement DriveElement;
+        private int currentQuantity = 0;
+        #endregion
+
+        #region Writer Settings
         private string savePath = "";
+        private string saveFolder = "";
         private int scanNumber = -1;
+        private int partNumber = 1;
+        private DriveInfo currentDrive;
         private XmlWriterSettings xmlWriterSettings = null;
         private XmlSerializerNamespaces emptyNamespaces = new XmlSerializerNamespaces(new[] { XmlQualifiedName.Empty });
         private XmlDocument xmlDocument = new XmlDocument();
         private XmlElement currentXMLElement = null;
         private XmlSerializer serializer = new XmlSerializer(typeof(FileDataModel));
+        #endregion
 
-        // Properties
+        #region Properties
         public bool Running 
         { 
             get => xmlWriterRunning;
@@ -53,14 +66,23 @@ namespace File_Scanner.Functionality
                 return savePath;
             }
         }
+        public string SaveFolder
+        {
+            get
+            {
+                if (string.IsNullOrEmpty(saveFolder))
+                    saveFolder = Path.Combine(SavePath, $"{Settings.OUTPUT_FOLDER_NAME}{ScanNumber.ToString()}");
+                return saveFolder;
+            }
+        }
         public int ScanNumber
         {
             get
             {
-                if (scanNumber == -1 && File.Exists(Path.Combine(SavePath, ScannerViewModel.STREAM_NUMBER_FILE_NAME)))
+                if (scanNumber == -1 && File.Exists(Path.Combine(SavePath, Settings.STREAM_NUMBER_FILE_NAME)))
                 {
                     string output = "";
-                    using (var reader = new StreamReader(Path.Combine(SavePath, ScannerViewModel.STREAM_NUMBER_FILE_NAME)))
+                    using (var reader = new StreamReader(Path.Combine(SavePath, Settings.STREAM_NUMBER_FILE_NAME)))
                     {
                         output = reader.ReadLine();
                     }
@@ -73,17 +95,19 @@ namespace File_Scanner.Functionality
                 }
             }
         }
-        public string SaveFile { get => Path.Combine(SavePath, $"{ScannerViewModel.OUTPUT_FILE_NAME}{ScanNumber.ToString()}.xml"); }
+        public string SaveFile { get => Path.Combine(SaveFolder, $"{Settings.OUTPUT_FILE_NAME}{ScanNumber.ToString()}_PARTNUM.xml"); }
+        #endregion
 
-        // Events
+        #region Events
         private void AddHandlers()
         {
             Scanner.Instance.FileDataUpdated += WriteXML;
             Scanner.Instance.ScannerStarted += StartXMLWriter;
             Scanner.Instance.ScannerStopped += StopXMLWriter;
         }
+        #endregion
 
-        // Constructor
+        #region Constructor
         public XMLWriter(ConcurrentQueue<NewFileDataEventArgs> queue)
         {
             Instance = this;
@@ -91,6 +115,8 @@ namespace File_Scanner.Functionality
             xmlWriter = new Thread(new ThreadStart(Write));
             AddHandlers();
         }
+        #endregion
+
         private void StartXMLWriter(object sender, EventArgs e)
         {
             Stop();
@@ -105,21 +131,16 @@ namespace File_Scanner.Functionality
                 PopAndProcessItem();
             }
             // If the setting for dynamic saving isn't checked then save the xml file
-            if (!ScannerViewModel.SETTING_DYNAMIC_SAVE)
+            if (!Settings.SETTING_DYNAMIC_SAVE)
             {
-                using (var streamWriter = new StreamWriter(SaveFile, false))
-                {
-                    xmlDocument.Save(streamWriter);
-                }
+                SaveDocument();
             }
             Stop();
         }
         public void Start()
         {
             // Setup the XML Document
-            XmlDeclaration xmlDeclaration = xmlDocument.CreateXmlDeclaration("1.0", "UTF-8", null);
-            XmlElement xmlRoot = xmlDocument.DocumentElement;
-            xmlDocument.InsertBefore(xmlDeclaration, xmlRoot);
+            CreateNewDocument();
             // Start the writer thread
             xmlWriterRunning = true;
             xmlWriter.Start();
@@ -144,9 +165,27 @@ namespace File_Scanner.Functionality
             while (xmlWriterRunning)
                 PopAndProcessItem();
         }
+        private void CreateNewDocument()
+        {
+            xmlDocument = new XmlDocument();
+            XmlDeclaration xmlDeclaration = xmlDocument.CreateXmlDeclaration("1.0", "UTF-8", null);
+            XmlElement xmlRoot = xmlDocument.DocumentElement;
+            xmlDocument.InsertBefore(xmlDeclaration, xmlRoot);
+        }
+        private void SaveDocument()
+        {
+            // Create the output directory if it doesn't exist
+            if (!Directory.Exists(SaveFolder))
+                Directory.CreateDirectory(SaveFolder);
+            // Save the current document
+            using (var streamWriter = new StreamWriter(SaveFile.Replace("PARTNUM", partNumber.ToString()), false))
+            {
+                xmlDocument.Save(streamWriter);
+            }
+        }
         private void PopAndProcessItem()
         {
-            if (ScannerViewModel.SETTING_DYNAMIC_SAVE)
+            if (Settings.SETTING_DYNAMIC_SAVE)
             {
                 using (var streamWriter = new StreamWriter(SaveFile, false))
                 {
@@ -171,12 +210,21 @@ namespace File_Scanner.Functionality
         }
         private void AddModelToTree(FileDataModel model)
         {
+            if (currentQuantity > Settings.SETTING_SPLIT_QUANTITY)
+            {
+                SaveDocument();
+                CreateNewDocument();
+                CreateNewDriveElement();
+                currentQuantity = 0;
+                partNumber++;
+            }
             XmlElement xmlElement = xmlDocument.CreateElement(string.Empty, model.GetType().FullName, string.Empty);
             currentXMLElement.AppendChild(xmlElement);
             AddItemToTree(nameof(model.Path), model.Path, xmlElement);
             AddItemToTree(nameof(model.Size), model.Size.ToString(), xmlElement);
             AddItemToTree(nameof(model.CreationDate), model.CreationDate.ToString(), xmlElement);
             AddItemToTree(nameof(model.ModifiedDate), model.ModifiedDate.ToString(), xmlElement);
+            currentQuantity++;
         }
         private void AddItemToTree(string name, string value, XmlElement Parent)
         {
@@ -190,32 +238,39 @@ namespace File_Scanner.Functionality
             Regex regex = new Regex("[^a-zA-Z]");
             return regex.Replace(text, "");
         }
-        public void NewDrive(string Drive, long TotalSize, long TotalFreeSpace)
+        public void NewDrive(DriveInfo driveInfo)
+        {
+            // Set the current drive information
+            currentDrive = driveInfo;
+            // Create the xml section for it
+            CreateNewDriveElement();
+        }
+        private void CreateNewDriveElement()
         {
             // Add drive header
-            XmlElement xmlDrive = xmlDocument.CreateElement(string.Empty, RemoveInvalidChars($"Drive_{Drive}"), string.Empty);
-            xmlDocument.AppendChild(xmlDrive);
+            DriveElement = xmlDocument.CreateElement(string.Empty, RemoveInvalidChars($"Drive_{currentDrive.Name}"), string.Empty);
+            xmlDocument.AppendChild(DriveElement);
             // Add drive stats
             XmlElement xmlElementDriveHeader = xmlDocument.CreateElement(string.Empty, RemoveInvalidChars("Drive_Statistics"), string.Empty);
-            xmlDrive.AppendChild(xmlElementDriveHeader);
+            DriveElement.AppendChild(xmlElementDriveHeader);
             // Add drive size
             XmlElement xmlElementDriveSize = xmlDocument.CreateElement(string.Empty, RemoveInvalidChars("Drive_Size"), string.Empty);
             xmlElementDriveHeader.AppendChild(xmlElementDriveSize);
-            XmlText xmlTextDriveSize = xmlDocument.CreateTextNode(TotalSize.ToString());
+            XmlText xmlTextDriveSize = xmlDocument.CreateTextNode(currentDrive.TotalSize.ToString());
             xmlElementDriveSize.AppendChild(xmlTextDriveSize);
             // Add drive free space
             XmlElement xmlElementDriveFreeSpace = xmlDocument.CreateElement(string.Empty, RemoveInvalidChars("Drive_Free_Space"), string.Empty);
             xmlElementDriveHeader.AppendChild(xmlElementDriveFreeSpace);
-            XmlText xmlTextDriveFreeSpace = xmlDocument.CreateTextNode(TotalFreeSpace.ToString());
+            XmlText xmlTextDriveFreeSpace = xmlDocument.CreateTextNode(currentDrive.TotalFreeSpace.ToString());
             xmlElementDriveFreeSpace.AppendChild(xmlTextDriveFreeSpace);
             // Set the current element to the current drive
-            currentXMLElement = xmlDrive;
+            currentXMLElement = DriveElement;
         }
         public void IterateScanNumber()
         {
             int SN = ScanNumber;
             SN++;
-            using (var writer = new StreamWriter(Path.Combine(SavePath, ScannerViewModel.STREAM_NUMBER_FILE_NAME)))
+            using (var writer = new StreamWriter(Path.Combine(SavePath, Settings.STREAM_NUMBER_FILE_NAME)))
             {
                 writer.Write(SN.ToString());
             }

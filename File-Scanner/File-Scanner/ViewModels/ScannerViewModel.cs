@@ -22,13 +22,6 @@ namespace File_Scanner.ViewModels
 {
     public class ScannerViewModel : INotifyPropertyChanged
     {
-        #region Constants
-        public const int THREAD_PAUSE_CHECK_INTERVAL = 100;
-        public const string STREAM_NUMBER_FILE_NAME = "StreamNumber.txt";
-        public const string OUTPUT_FILE_NAME = "ScanResults_";
-        public const bool SETTING_DYNAMIC_SAVE = false;
-        #endregion
-
         #region Fields
         // Main item queue
         private ConcurrentQueue<NewFileDataEventArgs> ItemQueue = new ConcurrentQueue<NewFileDataEventArgs>();

@@ -185,7 +185,7 @@ namespace File_Scanner.Functionality
                     continue;
                 }
                 // Indent the drive on the XML output
-                XMLWriter.Instance.NewDrive(drive, driveInfo.TotalSize, driveInfo.TotalFreeSpace);
+                XMLWriter.Instance.NewDrive(driveInfo);
 
                 // Set the current XML element to be the current drive
 
@@ -225,7 +225,7 @@ namespace File_Scanner.Functionality
                     while (scannerPaused)
                     {
                         // Pause the thread if the scanner isn't running
-                        Thread.Sleep(ScannerViewModel.THREAD_PAUSE_CHECK_INTERVAL);
+                        Thread.Sleep(Settings.THREAD_PAUSE_CHECK_INTERVAL);
                     }
 
                     // Add the file specification to the bag
