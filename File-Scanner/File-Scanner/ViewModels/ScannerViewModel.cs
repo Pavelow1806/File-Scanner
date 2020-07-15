@@ -254,8 +254,6 @@ namespace File_Scanner.ViewModels
                 // Indent the drive on the XML output
                 XmlElement xmlDrive = xmlDocument.CreateElement(string.Empty, RemoveInvalidChars($"Drive_{drive}"), string.Empty);
                 xmlDocument.AppendChild(xmlDrive);
-                // Set the current XML element to be the current drive
-                currentXMLElement = xmlDrive;
 
                 // Stop scanning if required
                 if (!scannerRunning)
@@ -268,6 +266,25 @@ namespace File_Scanner.ViewModels
                     Console.WriteLine($"The drive {driveInfo.Name} couldn't be read.");
                     continue;
                 }
+
+                // Output some stats from the drive information to the xml file
+                XmlElement xmlElementDriveHeader = xmlDocument.CreateElement(string.Empty, RemoveInvalidChars("Drive_Statistics"), string.Empty);
+                xmlDrive.AppendChild(xmlElementDriveHeader);
+                // Add drive size
+                XmlElement xmlElementDriveSize = xmlDocument.CreateElement(string.Empty, RemoveInvalidChars("Drive_Size"), string.Empty);
+                xmlElementDriveHeader.AppendChild(xmlElementDriveSize);
+                XmlText xmlTextDriveSize = xmlDocument.CreateTextNode(driveInfo.TotalSize.ToString());
+                xmlElementDriveSize.AppendChild(xmlTextDriveSize);
+                // Add drive free space
+                XmlElement xmlElementDriveFreeSpace = xmlDocument.CreateElement(string.Empty, RemoveInvalidChars("Drive_Free_Space"), string.Empty);
+                xmlElementDriveHeader.AppendChild(xmlElementDriveFreeSpace);
+                XmlText xmlTextDriveFreeSpace = xmlDocument.CreateTextNode(driveInfo.TotalFreeSpace.ToString());
+                xmlElementDriveFreeSpace.AppendChild(xmlTextDriveFreeSpace);
+
+                // Set the current XML element to be the current drive
+                currentXMLElement = xmlDrive;
+
+                // Begin iterating through the drive
                 DirectoryInfo rootDirectory = driveInfo.RootDirectory;
                 IterateThroughDirectory(rootDirectory);
             }
