@@ -32,7 +32,7 @@ namespace File_Scanner.ViewModels
         private Thread scanner;
         private Thread xmlWriter;
         private ConcurrentBag<FileDataModel> files = new ConcurrentBag<FileDataModel>();
-        private ConcurrentQueue<NewFileXMLDataEventArgs> XmlQueue = new ConcurrentQueue<NewFileXMLDataEventArgs>();
+        private ConcurrentQueue<NewFileDataEventArgs> ItemQueue = new ConcurrentQueue<NewFileDataEventArgs>();
         private bool scannerRunning = false;
         private bool scannerPaused = false;
         // View Model field
@@ -52,6 +52,7 @@ namespace File_Scanner.ViewModels
         private XmlSerializerNamespaces emptyNamespaces = new XmlSerializerNamespaces(new[] { XmlQualifiedName.Empty });
         private XmlDocument xmlDocument = new XmlDocument();
         private XmlElement currentXMLElement = null;
+        private XmlSerializer serializer = new XmlSerializer(typeof(FileDataModel));
         #endregion
 
         #region Properties
@@ -156,20 +157,7 @@ namespace File_Scanner.ViewModels
                 }
             }
         }
-        public string SaveFile { get => Path.Combine(SavePath, $"{OUTPUT_FILE_NAME}{ScanNumber.ToString()}.txt"); }
-        public XmlWriterSettings XmlWriterSettings
-        {
-            get
-            {
-                if (xmlWriterSettings == null)
-                {
-                    xmlWriterSettings = new XmlWriterSettings();
-                    xmlWriterSettings.Indent = true;
-                    xmlWriterSettings.OmitXmlDeclaration = true;
-                }
-                return xmlWriterSettings;
-            }
-        }
+        public string SaveFile { get => Path.Combine(SavePath, $"{OUTPUT_FILE_NAME}{ScanNumber.ToString()}.xml"); }
         #endregion
 
         #region Events
@@ -364,17 +352,8 @@ namespace File_Scanner.ViewModels
         }
         private void WriteXML(object sender, NewFileDataEventArgs e)
         {
-            XmlSerializer serializer = new XmlSerializer(typeof(FileDataModel));
-            var xml = "";
-            using (var stringWriter = new StringWriter())
-            {
-                using (var xmlWriter = XmlWriter.Create(stringWriter, XmlWriterSettings))
-                {
-                    serializer.Serialize(xmlWriter, e.Data, emptyNamespaces);
-                    xml = stringWriter.ToString();
-                }
-            }
-            XmlQueue.Enqueue(new NewFileXMLDataEventArgs(xml));
+            // Add the item to the queue
+            ItemQueue.Enqueue(e);
         }
         private void Write()
         {
@@ -391,16 +370,31 @@ namespace File_Scanner.ViewModels
                 // Otherwise continue writing
                 using (var streamWriter = new StreamWriter(SaveFile, false))
                 {
-                    NewFileXMLDataEventArgs item = null;
-                    XmlQueue.TryDequeue(out item);
+                    NewFileDataEventArgs item = null;
+                    ItemQueue.TryDequeue(out item);
                     if (item != null)
                     {
-                        XmlText content = xmlDocument.CreateTextNode(item.XML);
-                        currentXMLElement.AppendChild(content);
+                        AddModelToTree(item.Data);
                         xmlDocument.Save(streamWriter);
                     }
                 }
             }
+        }
+        private void AddModelToTree(FileDataModel model)
+        {
+            XmlElement xmlElement = xmlDocument.CreateElement(string.Empty, model.GetType().FullName, string.Empty);
+            currentXMLElement.AppendChild(xmlElement);
+            AddItemToTree(nameof(model.Path), model.Path, xmlElement);
+            AddItemToTree(nameof(model.Size), model.Size.ToString(), xmlElement);
+            AddItemToTree(nameof(model.CreationDate), model.CreationDate.ToString(), xmlElement);
+            AddItemToTree(nameof(model.ModifiedDate), model.ModifiedDate.ToString(), xmlElement);
+        }
+        private void AddItemToTree(string name, string value, XmlElement Parent)
+        {
+            XmlElement xmlElement = xmlDocument.CreateElement(string.Empty, name, string.Empty);
+            Parent.AppendChild(xmlElement);
+            XmlText xmlText = xmlDocument.CreateTextNode(value);
+            xmlElement.AppendChild(xmlText);
         }
         private string RemoveInvalidChars(string text)
         {

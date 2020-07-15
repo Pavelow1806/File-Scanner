@@ -15,6 +15,5 @@ namespace File_Scanner.Models
         public float Size { get; set; } = 0.0f;
         public DateTime CreationDate { get; set; } = default;
         public DateTime ModifiedDate { get; set; } = default;
-        public XmlElement Parent { get; set; } = null;
     }
 }
