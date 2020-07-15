@@ -1,4 +1,5 @@
-﻿using File_Scanner.Models;
+﻿using File_Scanner.Functionality;
+using File_Scanner.Models;
 using File_Scanner.OperationEventArgs;
 using GalaSoft.MvvmLight.Command;
 using System;
@@ -22,37 +23,19 @@ namespace File_Scanner.ViewModels
     public class ScannerViewModel : INotifyPropertyChanged
     {
         #region Constants
-        private const int THREAD_PAUSE_CHECK_INTERVAL = 100;
-        private const string STREAM_NUMBER_FILE_NAME = "StreamNumber.txt";
-        private const string OUTPUT_FILE_NAME = "ScanResults_";
+        public const int THREAD_PAUSE_CHECK_INTERVAL = 100;
+        public const string STREAM_NUMBER_FILE_NAME = "StreamNumber.txt";
+        public const string OUTPUT_FILE_NAME = "ScanResults_";
+        public const bool SETTING_DYNAMIC_SAVE = false;
         #endregion
 
         #region Fields
-        // Threading
-        private Thread scanner;
-        private Thread xmlWriter;
-        private ConcurrentBag<FileDataModel> files = new ConcurrentBag<FileDataModel>();
+        // Main item queue
         private ConcurrentQueue<NewFileDataEventArgs> ItemQueue = new ConcurrentQueue<NewFileDataEventArgs>();
-        private bool scannerRunning = false;
-        private bool scannerPaused = false;
-        // View Model field
-        private int directoryCount = 0;
-        private int fileCount = 0;
-        private string currentDirectory = "";
-        private string currentFile = "";
-        // Locks
-        private object directoryCountLock = new object();
-        private object fileCountLock = new object();
-        private object currentDirectoryLock = new object();
-        private object currentFileLock = new object();
-        // XML Writing
-        private string savePath = "";
-        private int scanNumber = -1;
-        private XmlWriterSettings xmlWriterSettings = null;
-        private XmlSerializerNamespaces emptyNamespaces = new XmlSerializerNamespaces(new[] { XmlQualifiedName.Empty });
-        private XmlDocument xmlDocument = new XmlDocument();
-        private XmlElement currentXMLElement = null;
-        private XmlSerializer serializer = new XmlSerializer(typeof(FileDataModel));
+        // Scanner
+        private Scanner Scanner;
+        // XML Writer
+        private XMLWriter XMLWriter;
         #endregion
 
         #region Properties
@@ -60,121 +43,53 @@ namespace File_Scanner.ViewModels
         {
             get
             {
-                lock (directoryCountLock) { return directoryCount; }
-            }
-            set
-            {
-                lock (directoryCountLock)
-                {
-                    if (directoryCount != value)
-                    {
-                        directoryCount = value;
-                        OnPropertyChanged(nameof(DirectoryCount));
-                    }
-                }
+                lock (Scanner.directoryCountLock) { return Scanner.directoryCount; }
             }
         }
         public int FileCount
         {
             get
             {
-                lock (fileCountLock) { return fileCount; }
-            }
-            set
-            {
-                lock (fileCountLock)
-                {
-                    if (fileCount != value)
-                    {
-                        fileCount = value;
-                        OnPropertyChanged(nameof(FileCount));
-                    }
-                }
+                lock (Scanner.fileCountLock) { return Scanner.fileCount; }
             }
         }
         public string CurrentDirectory
         {
             get
             {
-                lock (currentDirectoryLock) { return currentDirectory; }
-            }
-            set
-            {
-                lock (currentDirectoryLock)
-                {
-                    if (currentDirectory != value)
-                    {
-                        currentDirectory = value;
-                        OnPropertyChanged(nameof(CurrentDirectory));
-                    }
-                }
+                lock (Scanner.currentDirectoryLock) { return Scanner.currentDirectory; }
             }
         }
         public string CurrentFile
         {
             get
             {
-                lock (currentFileLock) { return currentFile; }
-            }
-            set
-            {
-                lock (currentFileLock)
-                {
-                    if (currentFile != value)
-                    {
-                        currentFile = value;
-                        OnPropertyChanged(nameof(CurrentFile));
-                    }
-                }
+                lock (Scanner.currentFileLock) { return Scanner.currentFile; }
             }
         }
-        public string SavePath
+        public bool Ready
         {
-            get
-            {
-                if (string.IsNullOrEmpty(savePath))
-                    savePath = Environment.CurrentDirectory;
-                return savePath;
-            }
+            get => !Scanner.Running;
         }
-        public int ScanNumber
+        public bool Running
         {
-            get
-            {
-                if (scanNumber == -1 && File.Exists(Path.Combine(SavePath, STREAM_NUMBER_FILE_NAME)))
-                {
-                    string output = "";
-                    using (var reader = new StreamReader(Path.Combine(SavePath, STREAM_NUMBER_FILE_NAME)))
-                    {
-                        output = reader.ReadLine();
-                    }
-                    int.TryParse(output, out scanNumber);
-                    return scanNumber;
-                }
-                else
-                {
-                    return scanNumber;
-                }
-            }
+            get => Scanner.Running;
         }
-        public string SaveFile { get => Path.Combine(SavePath, $"{OUTPUT_FILE_NAME}{ScanNumber.ToString()}.xml"); }
+        #endregion
+
+        #region Constructor
+        public ScannerViewModel()
+        {
+            Scanner = new Scanner();
+            XMLWriter = new XMLWriter(ItemQueue);
+            AddHandlers();
+        }
         #endregion
 
         #region Events
-        private event EventHandler<NewFileDataEventArgs> FileDataUpdated;
-
         private void AddHandlers()
         {
-            FileDataUpdated += WriteXML;
-        }
-        #endregion
-
-        #region Constructors
-        public ScannerViewModel()
-        {
-            AddHandlers();
-            scanner = new Thread(new ThreadStart(Scan));
-            xmlWriter = new Thread(new ThreadStart(Write));
+            Scanner.PropertyChanged += OnPropertyChanged;
         }
         #endregion
 
@@ -185,7 +100,7 @@ namespace File_Scanner.ViewModels
             get
             {
                 if (goCommand == null)
-                    goCommand = new RelayCommand(new Action(StartScan));
+                    goCommand = new RelayCommand(new Action(Scanner.StartScan));
 
                 return goCommand;
             }
@@ -197,232 +112,16 @@ namespace File_Scanner.ViewModels
             get
             {
                 if (stopCommand == null)
-                    stopCommand = new RelayCommand(new Action(StopScan));
+                    stopCommand = new RelayCommand(new Action(Scanner.StopScan));
 
                 return stopCommand;
             }
         }
         #endregion
 
-        #region Scanning Functionality
-        private void StartScan()
-        {
-            // Reset all metrics
-            DirectoryCount = 0;
-            FileCount = 0;
-            CurrentDirectory = "";
-            CurrentFile = "";
-            // Setup the XML Document
-            XmlDeclaration xmlDeclaration = xmlDocument.CreateXmlDeclaration("1.0", "UTF-8", null);
-            XmlElement xmlRoot = xmlDocument.DocumentElement;
-            xmlDocument.InsertBefore(xmlDeclaration, xmlRoot);
-            // Start the scan thread
-            scannerRunning = true;
-            scanner = new Thread(new ThreadStart(Scan));
-            scanner.Start();
-            xmlWriter.Start();
-        }
-        private void StopScan()
-        {
-            // Pause execution on the scanning thread
-            scannerPaused = true;
-            // Check whether the user would definitely like to stop
-            var result = MessageBox.Show("Are you sure you would like to stop scanning?", "Stop scanning?", MessageBoxButton.YesNo, MessageBoxImage.Warning);
-            if (result == MessageBoxResult.Yes)
-            {
-                scannerRunning = false;
-                scannerPaused = false;
-                DirectoryCount = 0;
-                FileCount = 0;
-                CurrentDirectory = "";
-                CurrentFile = "";
-            }
-            else
-                scannerPaused = false;
-        }
-        private void Scan()
-        {
-            // Start the scanner
-            scannerRunning = true;
-            // Iterate the scan number
-            IterateScanNumber();
-            // Get all drives on this machine
-            string[] drives = System.Environment.GetLogicalDrives();
-            // Cycle through each and go through each folder tree
-            foreach (var drive in drives)
-            {
-                // Indent the drive on the XML output
-                XmlElement xmlDrive = xmlDocument.CreateElement(string.Empty, RemoveInvalidChars($"Drive_{drive}"), string.Empty);
-                xmlDocument.AppendChild(xmlDrive);
-
-                // Stop scanning if required
-                if (!scannerRunning)
-                    break;
-
-                // Get data from the current drive
-                DriveInfo driveInfo = new DriveInfo(drive);
-                if (!driveInfo.IsReady)
-                {
-                    Console.WriteLine($"The drive {driveInfo.Name} couldn't be read.");
-                    continue;
-                }
-
-                // Output some stats from the drive information to the xml file
-                XmlElement xmlElementDriveHeader = xmlDocument.CreateElement(string.Empty, RemoveInvalidChars("Drive_Statistics"), string.Empty);
-                xmlDrive.AppendChild(xmlElementDriveHeader);
-                // Add drive size
-                XmlElement xmlElementDriveSize = xmlDocument.CreateElement(string.Empty, RemoveInvalidChars("Drive_Size"), string.Empty);
-                xmlElementDriveHeader.AppendChild(xmlElementDriveSize);
-                XmlText xmlTextDriveSize = xmlDocument.CreateTextNode(driveInfo.TotalSize.ToString());
-                xmlElementDriveSize.AppendChild(xmlTextDriveSize);
-                // Add drive free space
-                XmlElement xmlElementDriveFreeSpace = xmlDocument.CreateElement(string.Empty, RemoveInvalidChars("Drive_Free_Space"), string.Empty);
-                xmlElementDriveHeader.AppendChild(xmlElementDriveFreeSpace);
-                XmlText xmlTextDriveFreeSpace = xmlDocument.CreateTextNode(driveInfo.TotalFreeSpace.ToString());
-                xmlElementDriveFreeSpace.AppendChild(xmlTextDriveFreeSpace);
-
-                // Set the current XML element to be the current drive
-                currentXMLElement = xmlDrive;
-
-                // Begin iterating through the drive
-                DirectoryInfo rootDirectory = driveInfo.RootDirectory;
-                IterateThroughDirectory(rootDirectory);
-            }
-            // Once we've finished scanning, uncheck the bool
-            scannerRunning = false;
-        }
-        private void IterateThroughDirectory(DirectoryInfo directory)
-        {
-            // Change the current directory and display the path
-            DirectoryCount++;
-            CurrentDirectory = directory.FullName;
-            FileInfo[] fileArray = null;
-            try
-            {
-                // Attempt to get all of the files within the diretory we're currently looking at
-                fileArray = directory.GetFiles("*.*");
-            }
-            catch (Exception ex)
-            {
-                // Output if we weren't able to
-                Console.WriteLine(ex.Message);
-            }
-
-            if (fileArray != null)
-            {
-                // Cycle through each file in the array gathered from the current directory
-                foreach (var file in fileArray)
-                {
-                    // Before we scan each file, ensure that we're ready to scan and don't need to stop the thread or pause it
-                    if (!scannerRunning)
-                        break;
-
-                    while (scannerPaused)
-                    {
-                        // Pause the thread if the scanner isn't running
-                        Thread.Sleep(THREAD_PAUSE_CHECK_INTERVAL);
-                    }
-
-                    // Add the file specification to the bag
-                    FileDataModel currentFile = new FileDataModel()
-                    {
-                        Path = file.FullName,
-                        Size = file.Length,
-                        CreationDate = file.CreationTime,
-                        ModifiedDate = file.LastWriteTime
-                    };
-                    files.Add(currentFile);
-
-                    // Add the item to the queue
-                    FileDataUpdated?.BeginInvoke(this, new NewFileDataEventArgs(currentFile), null, null);
-
-                    // Display the current file
-                    FileCount++;
-                    CurrentFile = Path.GetFileName(file.FullName);
-                }
-
-                // Get all of the directories within this directory
-                DirectoryInfo[] directories = directory.GetDirectories();
-                // Iterate through each
-                foreach (var subDirectory in directories)
-                {
-                    // Stop scanning if the thread was stopped
-                    if (!scannerRunning)
-                        break;
-
-                    // Otherwise iterate through the directory
-                    IterateThroughDirectory(subDirectory);
-                }
-            }
-        }
-        #endregion
-
-        #region XML Writing Functionality
-        public void IterateScanNumber()
-        {
-            int SN = ScanNumber;
-            SN++;
-            using (var writer = new StreamWriter(Path.Combine(SavePath, STREAM_NUMBER_FILE_NAME)))
-            {
-                writer.Write(SN.ToString());
-            }
-        }
-        private void WriteXML(object sender, NewFileDataEventArgs e)
-        {
-            // Add the item to the queue
-            ItemQueue.Enqueue(e);
-        }
-        private void Write()
-        {
-            while (scannerRunning)
-            {
-                // Pause writing while the scanner is paused
-                while (scannerPaused)
-                {
-
-                }
-                // Stop the thread if the scanner has stopped
-                if (!scannerRunning)
-                    break;
-                // Otherwise continue writing
-                using (var streamWriter = new StreamWriter(SaveFile, false))
-                {
-                    NewFileDataEventArgs item = null;
-                    ItemQueue.TryDequeue(out item);
-                    if (item != null)
-                    {
-                        AddModelToTree(item.Data);
-                        xmlDocument.Save(streamWriter);
-                    }
-                }
-            }
-        }
-        private void AddModelToTree(FileDataModel model)
-        {
-            XmlElement xmlElement = xmlDocument.CreateElement(string.Empty, model.GetType().FullName, string.Empty);
-            currentXMLElement.AppendChild(xmlElement);
-            AddItemToTree(nameof(model.Path), model.Path, xmlElement);
-            AddItemToTree(nameof(model.Size), model.Size.ToString(), xmlElement);
-            AddItemToTree(nameof(model.CreationDate), model.CreationDate.ToString(), xmlElement);
-            AddItemToTree(nameof(model.ModifiedDate), model.ModifiedDate.ToString(), xmlElement);
-        }
-        private void AddItemToTree(string name, string value, XmlElement Parent)
-        {
-            XmlElement xmlElement = xmlDocument.CreateElement(string.Empty, name, string.Empty);
-            Parent.AppendChild(xmlElement);
-            XmlText xmlText = xmlDocument.CreateTextNode(value);
-            xmlElement.AppendChild(xmlText);
-        }
-        private string RemoveInvalidChars(string text)
-        {
-            Regex regex = new Regex("[^a-zA-Z]");
-            return regex.Replace(text, "");
-        }
-        #endregion
-
         #region INotifyPropertyChanged
         public event PropertyChangedEventHandler PropertyChanged;
-        private void OnPropertyChanged(string PropertyName) => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(PropertyName));
+        private void OnPropertyChanged(object sender, PropertyChangedEventArgs e) => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(e.PropertyName));
         #endregion
     }
 }

@@ -70,7 +70,10 @@
       <Generator>MSBuild:Compile</Generator>
       <SubType>Designer</SubType>
     </ApplicationDefinition>
+    <Compile Include="Converters\BoolToString.cs" />
     <Compile Include="Converters\IntToString.cs" />
+    <Compile Include="Functionality\Scanner.cs" />
+    <Compile Include="Functionality\XMLWriter.cs" />
     <Compile Include="OperationEventArgs\NewFileDataEventArgs.cs" />
     <Compile Include="Views\ScannerView.xaml.cs">
       <DependentUpon>ScannerView.xaml</DependentUpon>
