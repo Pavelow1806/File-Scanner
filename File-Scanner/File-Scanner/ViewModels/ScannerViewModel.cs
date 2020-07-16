@@ -31,6 +31,12 @@ namespace File_Scanner.ViewModels
         private XMLWriter XMLWriter;
         #endregion
 
+        #region UI Updates
+        private Thread UIUpdateThread;
+        private ConcurrentQueue<string> UIUpdates = new ConcurrentQueue<string>();
+        private bool running = false;
+        #endregion
+
         #region Properties
         public int DirectoryCount
         {
@@ -68,14 +74,45 @@ namespace File_Scanner.ViewModels
         {
             get => Scanner.Running;
         }
+        public double ScannedPercentage { get => (double.IsNaN(Scanner.Completed) ? 0.0f : Scanner.Completed); }
+        public double UnscannedPercentage { get => 1.0f - ScannedPercentage; }
         #endregion
 
         #region Constructor
         public ScannerViewModel()
         {
             Scanner = new Scanner();
-            XMLWriter = new XMLWriter(ItemQueue);
+            XMLWriter = new XMLWriter();
             AddHandlers();
+            UIUpdateThread = new Thread(new ThreadStart(UIUpdate));
+            running = true;
+            UIUpdateThread.Start();
+        }
+        ~ScannerViewModel()
+        {
+            UIUpdateThread.Join();
+        }
+        #endregion
+
+        #region UI Update Loop
+        private void UIUpdate()
+        {
+            // Check if the thread has been stopped externally
+            if (!running) return;
+
+            // Notify the UI of changes
+            while (UIUpdates.Count > 0)
+            {
+                string item = "";
+                UIUpdates.TryDequeue(out item);
+                PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(item));
+            }
+
+            // Sleep for designated amount of time
+            Thread.Sleep(Settings.SETTING_MILLISECONDS_BETWEEN_UI_UPDATES);
+
+            // Call itself again
+            UIUpdate();
         }
         #endregion
 
@@ -114,7 +151,11 @@ namespace File_Scanner.ViewModels
 
         #region INotifyPropertyChanged
         public event PropertyChangedEventHandler PropertyChanged;
-        private void OnPropertyChanged(object sender, PropertyChangedEventArgs e) => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(e.PropertyName));
+        private void OnPropertyChanged(object sender, PropertyChangedEventArgs e)
+        {
+            if (!UIUpdates.Contains(e.PropertyName))
+                UIUpdates.Enqueue(e.PropertyName);
+        }
         #endregion
     }
 }

@@ -15,27 +15,34 @@ namespace File_Scanner.Functionality
 {
     public class Scanner : INotifyPropertyChanged
     {
-        // Threading
+        #region Threading
         private Thread scanner;
+        #endregion
 
-        // Singleton Instance
+        #region Singleton Instance
         public static Scanner Instance;
+        #endregion
 
-        // Fields
+        #region Fields
         private bool scannerRunning = false;
         private bool scannerPaused = false;
         public int directoryCount = 0;
         public int fileCount = 0;
         public string currentDirectory = "";
         public string currentFile = "";
+        private long diskSpaceScanned = 0;
+        private long diskSpaceUsed = 0;
+        #endregion
 
-        // Locks
+        #region Locks
         public object directoryCountLock = new object();
         public object fileCountLock = new object();
         public object currentDirectoryLock = new object();
         public object currentFileLock = new object();
+        public object diskSpaceLock = new object();
+        #endregion
 
-        // Exposed Properties
+        #region Exposed Properties
         public bool Running 
         { 
             get => scannerRunning;
@@ -122,13 +129,62 @@ namespace File_Scanner.Functionality
                 }
             }
         }
+        public double Completed
+        {
+            get
+            {
+                if (diskSpaceScanned == 0 || diskSpaceUsed == 0)
+                    return 0;
+                else
+                    return  (double)((double)diskSpaceScanned / (double)diskSpaceUsed);
+            }
+        }
+        public long DiskSpaceScanned
+        {
+            get
+            {
+                lock(diskSpaceLock)
+                {
+                    return diskSpaceScanned;
+                }
+            }
+            set
+            {
+                lock (diskSpaceLock)
+                {
+                    if (diskSpaceScanned != value)
+                    {
+                        diskSpaceScanned = value;
+                        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs("ScannedPercentage"));
+                        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs("UnscannedPercentage"));
+                    }
+                }
+            }
+        }
+        public long DiskSpaceUsed
+        {
+            set
+            {
+                lock (diskSpaceLock)
+                {
+                    if (diskSpaceUsed != value)
+                    {
+                        diskSpaceUsed = value;
+                        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs("ScannedPercentage"));
+                        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs("UnscannedPercentage"));
+                    }
+                }
+            }
+        }
+        #endregion
 
-        // Events
+        #region Events
         public event EventHandler<NewFileDataEventArgs> FileDataUpdated;
         public event EventHandler ScannerStarted;
         public event EventHandler ScannerStopped;
         public event EventHandler<NewDriveEventArgs> NewDrive;
         public event PropertyChangedEventHandler PropertyChanged;
+        #endregion
 
         public Scanner()
         {
@@ -142,6 +198,8 @@ namespace File_Scanner.Functionality
             FileCount = 0;
             CurrentDirectory = "";
             CurrentFile = "";
+            DiskSpaceScanned = 0;
+            DiskSpaceUsed = 0;
             // Start the scan thread
             Running = true;
             scanner = new Thread(new ThreadStart(Scan));
@@ -183,6 +241,11 @@ namespace File_Scanner.Functionality
                     Console.WriteLine($"The drive {driveInfo.Name} couldn't be read.");
                     continue;
                 }
+
+                // Reset the loading bar metrics
+                DiskSpaceScanned = 0;
+                DiskSpaceUsed = driveInfo.TotalSize - driveInfo.TotalFreeSpace;
+
                 // Indent the drive on the XML output
                 NewDrive?.Invoke(this, new NewDriveEventArgs(driveInfo));
 
@@ -240,6 +303,7 @@ namespace File_Scanner.Functionality
                     // Display the current file
                     FileCount++;
                     CurrentFile = Path.GetFileName(file.FullName);
+                    DiskSpaceScanned += file.Length;
                 }
 
                 // Get all of the directories within this directory

@@ -6,7 +6,7 @@
         xmlns:local="clr-namespace:File_Scanner"
         mc:Ignorable="d"
         Title="File Scanner" 
-        Height="260" Width="500"
-        MinHeight="260" MinWidth="500">
+        Height="280" Width="500"
+        MinHeight="280" MinWidth="500">
     <ContentPresenter Content="{Binding}"/>
 </Window>

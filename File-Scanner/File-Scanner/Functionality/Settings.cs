@@ -15,6 +15,7 @@ namespace File_Scanner.Functionality
         public const string OUTPUT_FILE_NAME = "SR_";
         public const bool SETTING_DYNAMIC_SAVE = false;
         public const int SETTING_SPLIT_QUANTITY = 10000;
+        public const int SETTING_MILLISECONDS_BETWEEN_UI_UPDATES = 10;
         #endregion
     }
 }

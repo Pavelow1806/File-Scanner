@@ -71,6 +71,7 @@
       <SubType>Designer</SubType>
     </ApplicationDefinition>
     <Compile Include="Converters\BoolToString.cs" />
+    <Compile Include="Converters\DoubleToPercentage.cs" />
     <Compile Include="Converters\IntToString.cs" />
     <Compile Include="Functionality\Scanner.cs" />
     <Compile Include="Functionality\Settings.cs" />

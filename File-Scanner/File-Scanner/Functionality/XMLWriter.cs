@@ -22,7 +22,8 @@ namespace File_Scanner.Functionality
         #endregion
 
         #region Queue
-        private ConcurrentQueue<EventArgs> Queue = null;
+        private ConcurrentQueue<NewDriveEventArgs> DriveQueue = new ConcurrentQueue<NewDriveEventArgs>();
+        private ConcurrentQueue<NewFileDataEventArgs> ItemQueue = new ConcurrentQueue<NewFileDataEventArgs>();
         #endregion
 
         #region Threading
@@ -116,10 +117,9 @@ namespace File_Scanner.Functionality
         #endregion
 
         #region Constructor
-        public XMLWriter(ConcurrentQueue<EventArgs> queue)
+        public XMLWriter()
         {
             Instance = this;
-            Queue = queue;
             xmlWriter = new Thread(new ThreadStart(Write));
             AddHandlers();
         }
@@ -159,7 +159,7 @@ namespace File_Scanner.Functionality
         {
             xmlWriterRunning = false;
             // Loop through the remaining items in the queue and write them to the xml stream
-            while (!Queue.IsEmpty)
+            while (!ItemQueue.IsEmpty || !DriveQueue.IsEmpty)
             {
                 PopAndProcessItem();
             }
@@ -173,14 +173,14 @@ namespace File_Scanner.Functionality
         private void WriteXML(object sender, NewFileDataEventArgs e)
         {
             // Add the item to the queue
-            Queue.Enqueue(e);
+            ItemQueue.Enqueue(e);
         }
         public void NewDrive(object sender, NewDriveEventArgs e)
         {
             // Set the current drive information
             currentDrive = e.Data;
             // Queue the item
-            Queue.Enqueue(e);
+            DriveQueue.Enqueue(e);
         }
         #endregion
 
@@ -197,40 +197,42 @@ namespace File_Scanner.Functionality
             {
                 using (var streamWriter = new StreamWriter(SaveFile, false))
                 {
-                    EventArgs item = null;
-                    Queue.TryDequeue(out item);
+                    // Dequeue the new drive
+                    NewDriveEventArgs driveItem = null;
+                    DriveQueue.TryDequeue(out driveItem);
+                    if (driveItem != null)
+                    {
+                        CreateNewDriveElement(driveItem.Data);
+                    }
+
                     // Dequeue the new item
-                    // Check if it's a new file item, if so add it to the tree
-                    NewFileDataEventArgs FileDataItem = item as NewFileDataEventArgs;
-                    if (FileDataItem != null)
+                    NewFileDataEventArgs item = null;
+                    ItemQueue.TryDequeue(out item);
+                    if (item != null)
                     {
-                        AddModelToTree(FileDataItem.Data);
+                        AddModelToTree(item.Data);
                     }
-                    // Check if it's a new drive item, if so create a new drive and continue
-                    NewDriveEventArgs DriveItem = item as NewDriveEventArgs;
-                    if (DriveItem != null)
-                    {
-                        CreateNewDriveElement(DriveItem.Data);
-                    }
+
+                    // Save the document
                     xmlDocument.Save(streamWriter);
                 }
             }
             else
             {
-                EventArgs item = null;
-                Queue.TryDequeue(out item);
-                // Dequeue the new item
-                // Check if it's a new file item, if so add it to the tree
-                NewFileDataEventArgs FileDataItem = item as NewFileDataEventArgs;
-                if (FileDataItem != null)
+                // Dequeue the new drive
+                NewDriveEventArgs driveItem = null;
+                DriveQueue.TryDequeue(out driveItem);
+                if (driveItem != null)
                 {
-                    AddModelToTree(FileDataItem.Data);
+                    CreateNewDriveElement(driveItem.Data);
                 }
-                // Check if it's a new drive item, if so create a new drive and continue
-                NewDriveEventArgs DriveItem = item as NewDriveEventArgs;
-                if (DriveItem != null)
+
+                // Dequeue the new item
+                NewFileDataEventArgs item = null;
+                ItemQueue.TryDequeue(out item);
+                if (item != null)
                 {
-                    CreateNewDriveElement(DriveItem.Data);
+                    AddModelToTree(item.Data);
                 }
             }
         }
