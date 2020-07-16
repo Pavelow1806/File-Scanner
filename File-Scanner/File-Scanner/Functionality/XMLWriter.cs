@@ -22,7 +22,7 @@ namespace File_Scanner.Functionality
         #endregion
 
         #region Queue
-        private ConcurrentQueue<NewFileDataEventArgs> Queue = null;
+        private ConcurrentQueue<EventArgs> Queue = null;
         #endregion
 
         #region Threading
@@ -40,9 +40,9 @@ namespace File_Scanner.Functionality
 
         #region Writer Settings
         private string savePath = "";
-        private string saveFolder = "";
         private int scanNumber = -1;
         private int partNumber = 1;
+        private bool newDrive = false;
         private DriveInfo currentDrive;
         private XmlWriterSettings xmlWriterSettings = null;
         private XmlSerializerNamespaces emptyNamespaces = new XmlSerializerNamespaces(new[] { XmlQualifiedName.Empty });
@@ -70,9 +70,7 @@ namespace File_Scanner.Functionality
         {
             get
             {
-                if (string.IsNullOrEmpty(saveFolder))
-                    saveFolder = Path.Combine(SavePath, $"{Settings.OUTPUT_FOLDER_NAME}{ScanNumber.ToString()}");
-                return saveFolder;
+                return Path.Combine(SavePath, $"{Settings.OUTPUT_FOLDER_NAME}{ScanNumber.ToString()}");
             }
         }
         public int ScanNumber
@@ -87,6 +85,15 @@ namespace File_Scanner.Functionality
                         output = reader.ReadLine();
                     }
                     int.TryParse(output, out scanNumber);
+                    return scanNumber;
+                }
+                else if (scanNumber == -1 && !File.Exists(Path.Combine(SavePath, Settings.STREAM_NUMBER_FILE_NAME)))
+                {
+                    scanNumber = 0;
+                    using (var writer = new StreamWriter(Path.Combine(SavePath,Settings.STREAM_NUMBER_FILE_NAME)))
+                    {
+                        writer.Write(scanNumber.ToString());
+                    }
                     return scanNumber;
                 }
                 else
@@ -104,11 +111,12 @@ namespace File_Scanner.Functionality
             Scanner.Instance.FileDataUpdated += WriteXML;
             Scanner.Instance.ScannerStarted += StartXMLWriter;
             Scanner.Instance.ScannerStopped += StopXMLWriter;
+            Scanner.Instance.NewDrive += NewDrive;
         }
         #endregion
 
         #region Constructor
-        public XMLWriter(ConcurrentQueue<NewFileDataEventArgs> queue)
+        public XMLWriter(ConcurrentQueue<EventArgs> queue)
         {
             Instance = this;
             Queue = queue;
@@ -117,6 +125,31 @@ namespace File_Scanner.Functionality
         }
         #endregion
 
+        #region Control Methods
+        public void Start()
+        {
+            // Starting a new scan so iterate scan number
+            IterateScanNumber();
+            // Setup the XML Document
+            CreateNewDocument();
+            // Start the writer thread
+            xmlWriterRunning = true;
+            xmlWriter = new Thread(new ThreadStart(Write));
+            xmlWriter.Start();
+        }
+        public void Stop()
+        {
+            // Stop the thread
+            xmlWriterRunning = false;
+            if (xmlWriter.IsAlive)
+                xmlWriter.Join();
+            // Reset the XML objects
+            xmlDocument = new XmlDocument();
+            currentXMLElement = null;
+        }
+        #endregion
+
+        #region Event Handling Functions
         private void StartXMLWriter(object sender, EventArgs e)
         {
             Stop();
@@ -137,33 +170,126 @@ namespace File_Scanner.Functionality
             }
             Stop();
         }
-        public void Start()
-        {
-            // Setup the XML Document
-            CreateNewDocument();
-            // Start the writer thread
-            xmlWriterRunning = true;
-            xmlWriter.Start();
-        }
-        public void Stop()
-        {
-            // Stop the thread
-            xmlWriterRunning = false;
-            if (xmlWriter.IsAlive)
-                xmlWriter.Join();
-            // Reset the XML objects
-            xmlDocument = new XmlDocument();
-            currentXMLElement = null;
-        }
         private void WriteXML(object sender, NewFileDataEventArgs e)
         {
             // Add the item to the queue
             Queue.Enqueue(e);
         }
+        public void NewDrive(object sender, NewDriveEventArgs e)
+        {
+            // Set the current drive information
+            currentDrive = e.Data;
+            // Queue the item
+            Queue.Enqueue(e);
+        }
+        #endregion
+
+        #region Main XML Writing Loop
         private void Write()
         {
+            // Start writing the output on the correct thread
             while (xmlWriterRunning)
                 PopAndProcessItem();
+        }
+        private void PopAndProcessItem()
+        {
+            if (Settings.SETTING_DYNAMIC_SAVE)
+            {
+                using (var streamWriter = new StreamWriter(SaveFile, false))
+                {
+                    EventArgs item = null;
+                    Queue.TryDequeue(out item);
+                    // Dequeue the new item
+                    // Check if it's a new file item, if so add it to the tree
+                    NewFileDataEventArgs FileDataItem = item as NewFileDataEventArgs;
+                    if (FileDataItem != null)
+                    {
+                        AddModelToTree(FileDataItem.Data);
+                    }
+                    // Check if it's a new drive item, if so create a new drive and continue
+                    NewDriveEventArgs DriveItem = item as NewDriveEventArgs;
+                    if (DriveItem != null)
+                    {
+                        CreateNewDriveElement(DriveItem.Data);
+                    }
+                    xmlDocument.Save(streamWriter);
+                }
+            }
+            else
+            {
+                EventArgs item = null;
+                Queue.TryDequeue(out item);
+                // Dequeue the new item
+                // Check if it's a new file item, if so add it to the tree
+                NewFileDataEventArgs FileDataItem = item as NewFileDataEventArgs;
+                if (FileDataItem != null)
+                {
+                    AddModelToTree(FileDataItem.Data);
+                }
+                // Check if it's a new drive item, if so create a new drive and continue
+                NewDriveEventArgs DriveItem = item as NewDriveEventArgs;
+                if (DriveItem != null)
+                {
+                    CreateNewDriveElement(DriveItem.Data);
+                }
+            }
+        }
+        #endregion
+
+        #region Queue Processing Functions
+        private void AddModelToTree(FileDataModel model)
+        {
+            try
+            {
+                if (currentQuantity > Settings.SETTING_SPLIT_QUANTITY)
+                {
+                    SaveDocument();
+                    CreateNewDocument();
+                    CreateNewDriveElement(currentDrive);
+                    currentQuantity = 0;
+                    partNumber++;
+                }
+                XmlElement xmlElement = xmlDocument.CreateElement(string.Empty, model.GetType().FullName, string.Empty);
+                currentXMLElement.AppendChild(xmlElement);
+                AddItemToTree(nameof(model.Path), model.Path, xmlElement);
+                AddItemToTree(nameof(model.Size), model.Size.ToString(), xmlElement);
+                AddItemToTree(nameof(model.CreationDate), model.CreationDate.ToString(), xmlElement);
+                AddItemToTree(nameof(model.ModifiedDate), model.ModifiedDate.ToString(), xmlElement);
+                currentQuantity++;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine(ex.Message);
+            }
+        }
+        private void AddItemToTree(string name, string value, XmlElement Parent)
+        {
+            XmlElement xmlElement = xmlDocument.CreateElement(string.Empty, name, string.Empty);
+            Parent.AppendChild(xmlElement);
+            XmlText xmlText = xmlDocument.CreateTextNode(value);
+            xmlElement.AppendChild(xmlText);
+        }
+        private void CreateNewDriveElement(DriveInfo drive)
+        {
+            // Add drive header
+            DriveElement = xmlDocument.CreateElement(string.Empty, RemoveInvalidChars($"Drive_{drive.Name}"), string.Empty);
+            xmlDocument.AppendChild(DriveElement);
+            // Add drive stats
+            XmlElement xmlElementDriveHeader = xmlDocument.CreateElement(string.Empty, RemoveInvalidChars("Drive_Statistics"), string.Empty);
+            DriveElement.AppendChild(xmlElementDriveHeader);
+            // Add drive size
+            XmlElement xmlElementDriveSize = xmlDocument.CreateElement(string.Empty, RemoveInvalidChars("Drive_Size"), string.Empty);
+            xmlElementDriveHeader.AppendChild(xmlElementDriveSize);
+            XmlText xmlTextDriveSize = xmlDocument.CreateTextNode(currentDrive.TotalSize.ToString());
+            xmlElementDriveSize.AppendChild(xmlTextDriveSize);
+            // Add drive free space
+            XmlElement xmlElementDriveFreeSpace = xmlDocument.CreateElement(string.Empty, RemoveInvalidChars("Drive_Free_Space"), string.Empty);
+            xmlElementDriveHeader.AppendChild(xmlElementDriveFreeSpace);
+            XmlText xmlTextDriveFreeSpace = xmlDocument.CreateTextNode(currentDrive.TotalFreeSpace.ToString());
+            xmlElementDriveFreeSpace.AppendChild(xmlTextDriveFreeSpace);
+            // Set the current element to the current drive
+            currentXMLElement = DriveElement;
+            currentDrive = drive;
         }
         private void CreateNewDocument()
         {
@@ -183,93 +309,19 @@ namespace File_Scanner.Functionality
                 xmlDocument.Save(streamWriter);
             }
         }
-        private void PopAndProcessItem()
-        {
-            if (Settings.SETTING_DYNAMIC_SAVE)
-            {
-                using (var streamWriter = new StreamWriter(SaveFile, false))
-                {
-                    NewFileDataEventArgs item = null;
-                    Queue.TryDequeue(out item);
-                    if (item != null)
-                    {
-                        AddModelToTree(item.Data);
-                        xmlDocument.Save(streamWriter);
-                    }
-                }
-            }
-            else
-            {
-                NewFileDataEventArgs item = null;
-                Queue.TryDequeue(out item);
-                if (item != null)
-                {
-                    AddModelToTree(item.Data);
-                }
-            }
-        }
-        private void AddModelToTree(FileDataModel model)
-        {
-            if (currentQuantity > Settings.SETTING_SPLIT_QUANTITY)
-            {
-                SaveDocument();
-                CreateNewDocument();
-                CreateNewDriveElement();
-                currentQuantity = 0;
-                partNumber++;
-            }
-            XmlElement xmlElement = xmlDocument.CreateElement(string.Empty, model.GetType().FullName, string.Empty);
-            currentXMLElement.AppendChild(xmlElement);
-            AddItemToTree(nameof(model.Path), model.Path, xmlElement);
-            AddItemToTree(nameof(model.Size), model.Size.ToString(), xmlElement);
-            AddItemToTree(nameof(model.CreationDate), model.CreationDate.ToString(), xmlElement);
-            AddItemToTree(nameof(model.ModifiedDate), model.ModifiedDate.ToString(), xmlElement);
-            currentQuantity++;
-        }
-        private void AddItemToTree(string name, string value, XmlElement Parent)
-        {
-            XmlElement xmlElement = xmlDocument.CreateElement(string.Empty, name, string.Empty);
-            Parent.AppendChild(xmlElement);
-            XmlText xmlText = xmlDocument.CreateTextNode(value);
-            xmlElement.AppendChild(xmlText);
-        }
         private string RemoveInvalidChars(string text)
         {
             Regex regex = new Regex("[^a-zA-Z]");
             return regex.Replace(text, "");
         }
-        public void NewDrive(DriveInfo driveInfo)
-        {
-            // Set the current drive information
-            currentDrive = driveInfo;
-            // Create the xml section for it
-            CreateNewDriveElement();
-        }
-        private void CreateNewDriveElement()
-        {
-            // Add drive header
-            DriveElement = xmlDocument.CreateElement(string.Empty, RemoveInvalidChars($"Drive_{currentDrive.Name}"), string.Empty);
-            xmlDocument.AppendChild(DriveElement);
-            // Add drive stats
-            XmlElement xmlElementDriveHeader = xmlDocument.CreateElement(string.Empty, RemoveInvalidChars("Drive_Statistics"), string.Empty);
-            DriveElement.AppendChild(xmlElementDriveHeader);
-            // Add drive size
-            XmlElement xmlElementDriveSize = xmlDocument.CreateElement(string.Empty, RemoveInvalidChars("Drive_Size"), string.Empty);
-            xmlElementDriveHeader.AppendChild(xmlElementDriveSize);
-            XmlText xmlTextDriveSize = xmlDocument.CreateTextNode(currentDrive.TotalSize.ToString());
-            xmlElementDriveSize.AppendChild(xmlTextDriveSize);
-            // Add drive free space
-            XmlElement xmlElementDriveFreeSpace = xmlDocument.CreateElement(string.Empty, RemoveInvalidChars("Drive_Free_Space"), string.Empty);
-            xmlElementDriveHeader.AppendChild(xmlElementDriveFreeSpace);
-            XmlText xmlTextDriveFreeSpace = xmlDocument.CreateTextNode(currentDrive.TotalFreeSpace.ToString());
-            xmlElementDriveFreeSpace.AppendChild(xmlTextDriveFreeSpace);
-            // Set the current element to the current drive
-            currentXMLElement = DriveElement;
-        }
+        #endregion
+
         public void IterateScanNumber()
         {
             int SN = ScanNumber;
             SN++;
+            scanNumber = SN;
+            partNumber = 1;
             using (var writer = new StreamWriter(Path.Combine(SavePath, Settings.STREAM_NUMBER_FILE_NAME)))
             {
                 writer.Write(SN.ToString());

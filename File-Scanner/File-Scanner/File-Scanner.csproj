@@ -75,6 +75,7 @@
     <Compile Include="Functionality\Scanner.cs" />
     <Compile Include="Functionality\Settings.cs" />
     <Compile Include="Functionality\XMLWriter.cs" />
+    <Compile Include="OperationEventArgs\NewDriveEventArgs.cs" />
     <Compile Include="OperationEventArgs\NewFileDataEventArgs.cs" />
     <Compile Include="Views\ScannerView.xaml.cs">
       <DependentUpon>ScannerView.xaml</DependentUpon>

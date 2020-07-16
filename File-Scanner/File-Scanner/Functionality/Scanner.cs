@@ -127,6 +127,7 @@ namespace File_Scanner.Functionality
         public event EventHandler<NewFileDataEventArgs> FileDataUpdated;
         public event EventHandler ScannerStarted;
         public event EventHandler ScannerStopped;
+        public event EventHandler<NewDriveEventArgs> NewDrive;
         public event PropertyChangedEventHandler PropertyChanged;
 
         public Scanner()
@@ -145,7 +146,7 @@ namespace File_Scanner.Functionality
             Running = true;
             scanner = new Thread(new ThreadStart(Scan));
             scanner.Start();
-            ScannerStopped?.Invoke(this, null);
+            ScannerStarted?.Invoke(this, null);
         }
         public void StopScan()
         {
@@ -166,8 +167,6 @@ namespace File_Scanner.Functionality
         {
             // Start the scanner
             Running = true;
-            // Iterate the scan number
-            XMLWriter.Instance.IterateScanNumber();
             // Get all drives on this machine
             string[] drives = System.Environment.GetLogicalDrives();
             // Cycle through each and go through each folder tree
@@ -185,9 +184,7 @@ namespace File_Scanner.Functionality
                     continue;
                 }
                 // Indent the drive on the XML output
-                XMLWriter.Instance.NewDrive(driveInfo);
-
-                // Set the current XML element to be the current drive
+                NewDrive?.Invoke(this, new NewDriveEventArgs(driveInfo));
 
                 // Begin iterating through the drive
                 DirectoryInfo rootDirectory = driveInfo.RootDirectory;

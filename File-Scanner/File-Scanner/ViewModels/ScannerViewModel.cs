@@ -24,7 +24,7 @@ namespace File_Scanner.ViewModels
     {
         #region Fields
         // Main item queue
-        private ConcurrentQueue<NewFileDataEventArgs> ItemQueue = new ConcurrentQueue<NewFileDataEventArgs>();
+        private ConcurrentQueue<EventArgs> ItemQueue = new ConcurrentQueue<EventArgs>();
         // Scanner
         private Scanner Scanner;
         // XML Writer
