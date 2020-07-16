@@ -1,12 +1,14 @@
 ﻿using File_Scanner.Functionality;
 using File_Scanner.Models;
 using File_Scanner.OperationEventArgs;
+using File_Scanner.Properties;
 using GalaSoft.MvvmLight.Command;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
+using System.Configuration;
 using System.IO;
 using System.Linq;
 using System.Text;
@@ -17,6 +19,7 @@ using System.Windows;
 using System.Windows.Input;
 using System.Xml;
 using System.Xml.Serialization;
+using Settings = File_Scanner.Functionality.Settings;
 
 namespace File_Scanner.ViewModels
 {
@@ -81,6 +84,7 @@ namespace File_Scanner.ViewModels
         #region Constructor
         public ScannerViewModel()
         {
+            ReadConfig();
             Scanner = new Scanner();
             XMLWriter = new XMLWriter();
             AddHandlers();
@@ -91,6 +95,19 @@ namespace File_Scanner.ViewModels
         ~ScannerViewModel()
         {
             UIUpdateThread.Join();
+        }
+        #endregion
+
+        #region Config
+        private void ReadConfig()
+        {
+            int.TryParse(ConfigurationManager.AppSettings["THREAD_PAUSE_CHECK_INTERVAL"], out Settings.THREAD_PAUSE_CHECK_INTERVAL);
+            Settings.STREAM_NUMBER_FILE_NAME = ConfigurationManager.AppSettings["STREAM_NUMBER_FILE_NAME"];
+            Settings.OUTPUT_FOLDER_NAME = ConfigurationManager.AppSettings["OUTPUT_FOLDER_NAME"];
+            Settings.OUTPUT_FILE_NAME = ConfigurationManager.AppSettings["OUTPUT_FILE_NAME"];
+            bool.TryParse(ConfigurationManager.AppSettings["SETTING_DYNAMIC_SAVE"], out Settings.SETTING_DYNAMIC_SAVE);
+            int.TryParse(ConfigurationManager.AppSettings["SETTING_SPLIT_QUANTITY"], out Settings.SETTING_SPLIT_QUANTITY);
+            int.TryParse(ConfigurationManager.AppSettings["SETTING_MILLISECONDS_BETWEEN_UI_UPDATES"], out Settings.SETTING_MILLISECONDS_BETWEEN_UI_UPDATES);
         }
         #endregion
 
